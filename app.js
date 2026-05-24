@@ -142,9 +142,6 @@ function toggleTimer() {
   }
 }
 
-  startTimer();
-}
-
 // -------------------------------------------------------------------------- //
 //                        CONTROLS AND BINDINGS SETUP                         //
 // -------------------------------------------------------------------------- //
@@ -165,13 +162,6 @@ function setupEventListeners() {
       toggleTimer();
     });
   }
-  // Tab Switching event listeners
-  document.querySelectorAll('.tab-link').forEach(link => {
-    link.addEventListener('click', () => {
-      const targetTab = link.getAttribute('data-tab');
-      switchTab(targetTab);
-    });
-  });
 
   // Session Label input
   const nameInput = document.getElementById('session-name');
@@ -209,6 +199,7 @@ function setupEventListeners() {
       state.activeSession.picked = 0;
       state.activeSession.pitched = 0;
       state.activeSession.rejected = 0;
+      state.activeSession.hangup = 0;
       state.activeSession.booked = 0;
       state.activeSession.name = '';
       nameInput.value = '';
@@ -286,9 +277,9 @@ function adjustCounter(stage, isIncrement) {
   if (isIncrement) {
     state.activeSession[stage]++;
 
-    // Upward cascade: Total Dials >= Connected >= Pitched >= (Booked + Not Interested)
-    if (stage === 'booked' || stage === 'rejected') {
-      const neededPitches = state.activeSession.booked + state.activeSession.rejected;
+    // Upward cascade: Total Dials >= Connected >= Pitched >= (Booked + Not Interested + Hang Up)
+    if (stage === 'booked' || stage === 'rejected' || stage === 'hangup') {
+      const neededPitches = state.activeSession.booked + state.activeSession.rejected + state.activeSession.hangup;
       if (state.activeSession.pitched < neededPitches) {
         state.activeSession.pitched = neededPitches;
       }
@@ -317,9 +308,10 @@ function adjustCounter(stage, isIncrement) {
       }
       if (stage === 'pitched' || stage === 'picked' || stage === 'total') {
         const maxLeaves = state.activeSession.pitched;
-        if (state.activeSession.booked + state.activeSession.rejected > maxLeaves) {
-          state.activeSession.rejected = Math.min(state.activeSession.rejected, maxLeaves);
-          state.activeSession.booked = Math.max(0, maxLeaves - state.activeSession.rejected);
+        if (state.activeSession.booked + state.activeSession.rejected + state.activeSession.hangup > maxLeaves) {
+          state.activeSession.hangup = Math.min(state.activeSession.hangup, maxLeaves);
+          state.activeSession.rejected = Math.min(state.activeSession.rejected, maxLeaves - state.activeSession.hangup);
+          state.activeSession.booked = Math.max(0, maxLeaves - state.activeSession.hangup - state.activeSession.rejected);
         }
       }
     }
@@ -340,17 +332,20 @@ function updateUI() {
   document.getElementById('count-total').textContent = active.total;
   document.getElementById('count-picked').textContent = active.picked;
   document.getElementById('count-pitched').textContent = active.pitched;
+  document.getElementById('count-hangup').textContent = active.hangup;
   document.getElementById('count-rejected').textContent = active.rejected;
   document.getElementById('count-booked').textContent = active.booked;
 
   // Render conversion percentages
   const connRate = active.total > 0 ? Math.round((active.picked / active.total) * 100) : 0;
   const pitchRate = active.picked > 0 ? Math.round((active.pitched / active.picked) * 100) : 0;
+  const hangupRate = active.pitched > 0 ? Math.round((active.hangup / active.pitched) * 100) : 0;
   const declineRate = active.pitched > 0 ? Math.round((active.rejected / active.pitched) * 100) : 0;
   const overallRate = active.total > 0 ? Math.round((active.booked / active.total) * 100) : 0;
 
   document.getElementById('pct-picked').textContent = `${connRate}% Connect Rate`;
   document.getElementById('pct-pitched-connect').textContent = `${pitchRate}% of Connects`;
+  document.getElementById('pct-hangup').textContent = `${hangupRate}% of Pitched`;
   document.getElementById('pct-rejected').textContent = `${declineRate}% of Pitched`;
   document.getElementById('pct-booked').textContent = `${overallRate}% Overall Rate`;
 
@@ -417,6 +412,7 @@ function saveSession() {
     total: active.total,
     picked: active.picked,
     pitched: active.pitched,
+    hangup: active.hangup,
     rejected: active.rejected,
     booked: active.booked
   };
@@ -432,6 +428,7 @@ function saveSession() {
     total: 0,
     picked: 0,
     pitched: 0,
+    hangup: 0,
     rejected: 0,
     booked: 0,
     name: '',
@@ -723,14 +720,15 @@ function exportToCSV() {
   }
 
   let csv = 'data:text/csv;charset=utf-8,';
-  csv += 'Timestamp,Campaign Label,Sent,Connected,Pitched,Not Interested,Booked,Booking Rate %\n';
+  csv += 'Timestamp,Campaign Label,Sent,Connected,Pitched,Hang Up on Pitch,Not Interested,Booked,Booking Rate %\n';
 
   state.history.forEach(l => {
     const time = new Date(l.timestamp).toLocaleString();
     const rate = l.total > 0 ? Math.round((l.booked / l.total) * 100) : 0;
     const labelClean = `"${l.name.replace(/"/g, '""')}"`;
+    const safeHangup = l.hangup || 0;
     
-    csv += `${time},${labelClean},${l.total},${l.picked},${l.pitched},${l.rejected},${l.booked},${rate}%\n`;
+    csv += `${time},${labelClean},${l.total},${l.picked},${l.pitched},${safeHangup},${l.rejected},${l.booked},${rate}%\n`;
   });
 
   const uri = encodeURI(csv);
