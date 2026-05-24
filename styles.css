@@ -229,8 +229,16 @@ body {
 .card-total   { --theme-c: var(--color-info); }
 .card-connect { --theme-c: var(--color-primary); }
 .card-pitch   { --theme-c: var(--color-warning); }
+.card-hangup  { --theme-c: #f43f5e; } /* Rose color for Hang Up */
 .card-reject  { --theme-c: var(--color-danger); }
 .card-booked  { --theme-c: var(--color-success); }
+
+/* Center the 6th card (Booked) on the second row in the 5-column grid */
+@media (min-width: 1101px) {
+  .card-booked {
+    grid-column: 3;
+  }
+}
 
 /* Beautiful glow and scaling hover effect matching Appoint Funnels design */
 .minimalist-card:hover {

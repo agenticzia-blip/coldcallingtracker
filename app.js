@@ -99,21 +99,25 @@ function startTimer() {
   }
 
   if (timerInterval) clearInterval(timerInterval);
-    timerRunning = true;
+  timerRunning = true;
 
   timerInterval = setInterval(() => {
-    const elapsedMs = Date.now() - state.activeSession.startTime;
-    const hours = Math.floor(elapsedMs / (3600 * 1000));
-    const minutes = Math.floor((elapsedMs % (3600 * 1000)) / (60 * 1000));
-    const seconds = Math.floor((elapsedMs % (60 * 1000)) / 1000);
+    const elapsedSoFar = state.activeSession.elapsedTime || 0;
+    const elapsedSinceStart = state.activeSession.startTime ? (Date.now() - state.activeSession.startTime) : 0;
+    const totalMs = elapsedSoFar + elapsedSinceStart;
+
+    const hours = Math.floor(totalMs / (3600 * 1000));
+    const minutes = Math.floor((totalMs % (3600 * 1000)) / (60 * 1000));
+    const seconds = Math.floor((totalMs % (60 * 1000)) / 1000);
 
     const pad = (num) => String(num).padStart(2, '0');
-    document.getElementById('timer-display').textContent = `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+    document.getElementById('timer-display').textContent = `${hours.toString().padStart(2, '0')}:${pad(minutes)}:${pad(seconds)}`;
   }, 1000);
 }
 
 function resetTimer() {
   state.activeSession.startTime = Date.now();
+  state.activeSession.elapsedTime = 0;
   startTimer();
 }
 
@@ -123,21 +127,31 @@ function toggleTimer() {
     // Pause timer
     clearInterval(timerInterval);
     timerRunning = false;
+    
+    // Save elapsed time
+    if (state.activeSession.startTime) {
+      state.activeSession.elapsedTime = (state.activeSession.elapsedTime || 0) + (Date.now() - state.activeSession.startTime);
+      state.activeSession.startTime = null;
+      saveToLocalStorage();
+    }
+
     // Change icon to play
     const icon = document.querySelector('#btn-timer-toggle i');
     if (icon) {
       icon.setAttribute('data-lucide', 'play');
-      lucide.createIcons();
+      if (typeof lucide !== 'undefined') lucide.createIcons();
     }
   } else {
     // Start timer
+    state.activeSession.startTime = Date.now();
+    saveToLocalStorage();
     startTimer();
-    timerRunning = true;
+    
     // Change icon to pause
     const icon = document.querySelector('#btn-timer-toggle i');
     if (icon) {
       icon.setAttribute('data-lucide', 'pause');
-      lucide.createIcons();
+      if (typeof lucide !== 'undefined') lucide.createIcons();
     }
   }
 }
@@ -404,11 +418,16 @@ function saveSession() {
     return;
   }
 
+  const elapsedSoFar = active.elapsedTime || 0;
+  const elapsedSinceStart = (active.startTime && timerRunning) ? (Date.now() - active.startTime) : 0;
+  const totalElapsedMs = elapsedSoFar + elapsedSinceStart;
+
   const campaignLabel = active.name.trim() || `Outbound Session #${state.history.length + 1}`;
   const logItem = {
     id: 'campaign_log_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
     timestamp: new Date().toISOString(),
     name: campaignLabel,
+    durationMs: totalElapsedMs,
     total: active.total,
     picked: active.picked,
     pitched: active.pitched,
@@ -432,7 +451,8 @@ function saveSession() {
     rejected: 0,
     booked: 0,
     name: '',
-    startTime: Date.now()
+    startTime: null,
+    elapsedTime: 0
   };
   document.getElementById('session-name').value = '';
 
@@ -508,6 +528,13 @@ function renderHistoryTable() {
     const dateStr = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
     const timeStr = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
     const bookRate = log.total > 0 ? Math.round((log.booked / log.total) * 100) : 0;
+    
+    // Format duration
+    const durMs = log.durationMs || 0;
+    const hrs = Math.floor(durMs / (3600 * 1000));
+    const mins = Math.floor((durMs % (3600 * 1000)) / (60 * 1000));
+    const pad = (n) => String(n).padStart(2, '0');
+    const durStr = durMs > 0 ? `${hrs}:${pad(mins)}` : '--';
 
     const tr = document.createElement('tr');
     tr.innerHTML = `
@@ -518,6 +545,7 @@ function renderHistoryTable() {
       <td>
         <span style="font-weight:600;">${escapeHTML(log.name)}</span>
       </td>
+      <td class="text-center" style="font-weight: 500;">${durStr}</td>
       <td class="text-center info-color" style="font-weight: 600;">${log.total}</td>
       <td class="text-center" style="color: var(--color-primary); font-weight: 600;">${log.picked}</td>
       <td class="text-center warning-color" style="font-weight: 600;">${log.pitched}</td>
@@ -527,12 +555,9 @@ function renderHistoryTable() {
         <span class="${bookRate >= 8 ? 'success-color' : ''}">${bookRate}%</span>
       </td>
       <td class="text-right">
-        <button id="btn-reset" class="btn btn-outline-light btn-reset" title="Wipe current active session">
-                  <i data-lucide="rotate-ccw"></i> Reset Session
-                </button>
-                <button id="btn-timer-toggle" class="btn btn-outline-light btn-timer-toggle" title="Start/Pause Timer">
-                  <i data-lucide="pause"></i>
-                </button>
+        <button class="btn btn-sm btn-outline-danger btn-delete-row" data-id="${log.id}" title="Delete Log">
+          <i data-lucide="trash-2"></i>
+        </button>
       </td>
     `;
 
@@ -720,7 +745,7 @@ function exportToCSV() {
   }
 
   let csv = 'data:text/csv;charset=utf-8,';
-  csv += 'Timestamp,Campaign Label,Sent,Connected,Pitched,Hang Up on Pitch,Not Interested,Booked,Booking Rate %\n';
+  csv += 'Timestamp,Campaign Label,Duration (Hours:Mins),Sent,Connected,Pitched,Hang Up on Pitch,Not Interested,Booked,Booking Rate %\n';
 
   state.history.forEach(l => {
     const time = new Date(l.timestamp).toLocaleString();
@@ -728,7 +753,14 @@ function exportToCSV() {
     const labelClean = `"${l.name.replace(/"/g, '""')}"`;
     const safeHangup = l.hangup || 0;
     
-    csv += `${time},${labelClean},${l.total},${l.picked},${l.pitched},${safeHangup},${l.rejected},${l.booked},${rate}%\n`;
+    // Format duration
+    const durMs = l.durationMs || 0;
+    const hrs = Math.floor(durMs / (3600 * 1000));
+    const mins = Math.floor((durMs % (3600 * 1000)) / (60 * 1000));
+    const pad = (n) => String(n).padStart(2, '0');
+    const durStr = durMs > 0 ? `${hrs}:${pad(mins)}` : '--';
+    
+    csv += `${time},${labelClean},${durStr},${l.total},${l.picked},${l.pitched},${safeHangup},${l.rejected},${l.booked},${rate}%\n`;
   });
 
   const uri = encodeURI(csv);
